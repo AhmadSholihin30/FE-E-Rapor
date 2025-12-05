@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic"
 export const fetchCache = "force-no-store"
 
 import type React from "react"
-import { useEffect, useState, useMemo, Suspense } from "react" // Tambah Suspense
+import { useEffect, useState, useMemo, Suspense } from "react"
 import { useSearchParams } from "next/navigation" 
 import { ProtectedRoute } from "@/components/protected-route"
 import { Navbar } from "@/components/layout/navbar"
@@ -12,14 +12,13 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Alert } from "@/components/alert"
-import { nilaiApi, usersApi, apiCall } from "@/lib/api"
-// Import Icon
+// Update Import: Tambahkan authApi
+import { nilaiApi, usersApi, authApi, apiCall } from "@/lib/api"
 import { 
   FileText, Save, CheckCircle2, Loader2, 
   School, BookOpen, User, Hash 
 } from "lucide-react"
 
-// --- 1. PINDAHKAN LOGIKA UTAMA KE SINI ---
 function InputNilaiContent() {
   const searchParams = useSearchParams() 
   
@@ -43,40 +42,24 @@ function InputNilaiContent() {
   const [semester, setSemester] = useState("1")
   const [nilai, setNilai] = useState<string>("")
 
-  // --- FETCH DATA ---
+  // --- FETCH DATA (DIPERBARUI) ---
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true)
 
-        // Ambil Token & Decode ID Guru
-        const getTokenFromCookie = (name: string) => {
-          if (typeof document === "undefined") return null;
-          const value = `; ${document.cookie}`;
-          const parts = value.split(`; ${name}=`);
-          if (parts.length === 2) return parts.pop()?.split(';').shift();
-          return null;
+        // 1. Ambil Data User menggunakan authApi.authMe()
+        // Respon: { message: "...", user: { id: 14, nama: "guru", ... } }
+        const response: any = await authApi.authMe()
+
+        // Ambil ID dari dalam object 'user'
+        const guruId = response?.user?.id
+
+        if (!guruId) {
+            throw new Error("Gagal memverifikasi identitas Guru (ID tidak ditemukan).")
         }
 
-        const token = getTokenFromCookie('token');
-        if (!token) throw new Error("Sesi kadaluarsa. Silakan login ulang.");
-
-        let guruId = null;
-        try {
-            const base64Url = token.split('.')[1];
-            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-            const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-            }).join(''));
-            const decoded = JSON.parse(jsonPayload);
-            guruId = decoded.id;
-        } catch (e) {
-            throw new Error("Gagal memproses data user.");
-        }
-
-        if (!guruId) throw new Error("ID Guru tidak ditemukan.");
-
-        // Fetch Data API
+        // 2. Fetch Data Jadwal & Siswa setelah ID Guru didapat
         const [scheduleData, siswaData] = await Promise.all([
             apiCall(`/guru/${guruId}/mapel-kelas`),
             usersApi.getSiswa()
@@ -378,7 +361,6 @@ function InputNilaiContent() {
   )
 }
 
-// --- 2. BUNGKUS DENGAN SUSPENSE UNTUK EXPORT DEFAULT ---
 export default function InputNilai() {
   return (
     <Suspense fallback={

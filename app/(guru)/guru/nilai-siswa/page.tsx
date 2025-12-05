@@ -5,29 +5,10 @@ import { ProtectedRoute } from "@/components/protected-route"
 import { Navbar } from "@/components/layout/navbar"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Alert } from "@/components/alert"
-import { nilaiApi, kelasApi } from "@/lib/api"
-// Import Icon
-import { Search, GraduationCap, FileText, Filter, AlertCircle, BookOpen } from "lucide-react"
+// Update Import: Tambah authApi
+import { nilaiApi, kelasApi, authApi } from "@/lib/api"
+import { Search, GraduationCap, Filter, AlertCircle, BookOpen } from "lucide-react"
 import { Card } from "@/components/ui/card"
-
-const parseJwt = (token: string) => {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    return JSON.parse(jsonPayload);
-  } catch (e) {
-    return null;
-  }
-}
-
-const getCookie = (name: string) => {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-  return match ? match[2] : null;
-}
 
 interface NilaiData {
   id: number;
@@ -46,18 +27,23 @@ export default function NilaiSiswa() {
   const [selectedKelas, setSelectedKelas] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
 
-  // Fetch Kelas
+  // Fetch Kelas (Diperbarui menggunakan authApi.authMe)
   useEffect(() => {
     const fetchKelas = async () => {
       try {
-        const token = getCookie("token");
-        if (!token) throw new Error("Token tidak ditemukan. Silakan login ulang.");
-        const userData = parseJwt(token);
-        if (!userData || !userData.id) throw new Error("Gagal membaca ID user.");
-        const guruId = userData.id;
+        // 1. Ambil data user dari server via authMe
+        const userResp: any = await authApi.authMe();
+        
+        // 2. Ambil ID dari object user
+        const guruId = userResp?.user?.id;
 
+        if (!guruId) throw new Error("Gagal membaca ID user.");
+
+        // 3. Fetch kelas berdasarkan ID Guru
         const data = await kelasApi.getKelasByGuruId(guruId) as any[];
         setKelas(data);
+        
+        // Set default selected kelas jika ada data
         if (data && data.length > 0) {
           setSelectedKelas(data[0].id);
         }
@@ -71,7 +57,7 @@ export default function NilaiSiswa() {
     fetchKelas();
   }, [])
 
-  // Fetch Nilai
+  // Fetch Nilai (Tidak berubah)
   useEffect(() => {
     if (!selectedKelas) return
     const fetchNilai = async () => {

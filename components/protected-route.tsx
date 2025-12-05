@@ -14,17 +14,22 @@ export function ProtectedRoute({ children, requiredRoles = [] }: ProtectedRouteP
   const router = useRouter()
 
   React.useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      router.push("/login")
+    if (loading) return
+
+    // 1️⃣ Belum login → ke login
+    if (!isAuthenticated) {
+      router.replace("/login")
+      return
     }
 
-    if (!loading && isAuthenticated && requiredRoles.length > 0) {
-      if (!user || !requiredRoles.includes(user.role)) {
-        router.push("/unauthorized")
-      }
+    // 2️⃣ Cek Role → kalau tidak cocok → unauthorized
+    if (requiredRoles.length > 0 && user && !requiredRoles.includes(user.role)) {
+      router.replace("/unauthorized")
+      return
     }
-  }, [isAuthenticated, loading, user, requiredRoles, router])
+  }, [loading, isAuthenticated, user, requiredRoles, router])
 
+  // Jangan render apapun saat loading
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -33,13 +38,9 @@ export function ProtectedRoute({ children, requiredRoles = [] }: ProtectedRouteP
     )
   }
 
-  if (!isAuthenticated) {
-    return null
-  }
-
-  if (requiredRoles.length > 0 && (!user || !requiredRoles.includes(user.role))) {
-    return null
-  }
+  // Jika belum login atau role salah, jangan render halaman
+  if (!isAuthenticated) return null
+  if (requiredRoles.length > 0 && user && !requiredRoles.includes(user.role)) return null
 
   return <>{children}</>
 }
