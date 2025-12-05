@@ -1,439 +1,380 @@
-"use client";
+"use client"
 
-import type React from "react";
-import { useEffect, useState } from "react";
-import { ProtectedRoute } from "@/components/protected-route";
-import { Navbar } from "@/components/layout/navbar";
-import { Sidebar } from "@/components/layout/sidebar";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Alert } from "@/components/alert";
-import { kelasApi } from "@/lib/api";
+import type React from "react"
+import { useEffect, useState, useMemo, Suspense } from "react"
+import { useSearchParams } from "next/navigation" 
+import { ProtectedRoute } from "@/components/protected-route"
+import { Navbar } from "@/components/layout/navbar"
+import { Sidebar } from "@/components/layout/sidebar"
+import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Alert } from "@/components/alert"
+import { nilaiApi, usersApi, apiCall } from "@/lib/api"
 import { 
-  AlertTriangle, Pencil, Trash2, Plus, X, Save, 
-  CheckCircle2, Loader2, School, Search 
-} from "lucide-react";
+  FileText, Save, CheckCircle2, Loader2, 
+  School, BookOpen, User, Hash 
+} from "lucide-react"
 
-export default function ManageKelas() {
-  const [kelasList, setKelasList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+// --- 1. KOMPONEN KONTEN UTAMA ---
+function InputNilaiContent() {
+  const searchParams = useSearchParams()
   
-  // State Loading Tombol
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  // State Data Master
+  const [rawSchedule, setRawSchedule] = useState<any[]>([]) 
+  const [listSiswa, setListSiswa] = useState<any[]>([])
+
+  // State UI
+  const [loading, setLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState("")
   
-  const [error, setError] = useState("");
-  
-  // State Filtering
-  const [searchTerm, setSearchTerm] = useState(''); 
+  // Modal Sukses
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successMessage, setSuccessMessage] = useState("")
 
-  // Form State
-  const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({
-    id: "",
-    nama_kelas: "",
-    tingkat: "10",
-    jurusan: "",
-  });
-  const [editId, setEditId] = useState<string | null>(null);
+  // State Form
+  const [selectedKelas, setSelectedKelas] = useState("")
+  const [selectedMapel, setSelectedMapel] = useState("")
+  const [selectedSiswa, setSelectedSiswa] = useState("")
+  const [semester, setSemester] = useState("1")
+  const [nilai, setNilai] = useState<string>("")
 
-  // Modal Delete State
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-
-  // Modal Success State
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
-
+  // --- FETCH DATA (LOGIKA BARU) ---
   useEffect(() => {
-    fetchKelas();
-  }, []);
+    const fetchData = async () => {
+      try {
+        setLoading(true)
 
-  const fetchKelas = async () => {
-    setLoading(true);
-    try {
-      const data = await kelasApi.getAll();
-      setKelasList(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch kelas");
-    } finally {
-      setLoading(false);
+        // 1. AMBIL ID DARI LOCAL STORAGE (Bukan Cookie)
+        const userStorage = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
+        
+        if (!userStorage) {
+             // Kalau kosong, berarti belum login atau session storage bersih
+             // Redirect manual atau biarkan ProtectedRoute yang handle
+             console.error("User data kosong di LocalStorage");
+             return; 
+        }
+
+        const userData = JSON.parse(userStorage);
+        const guruId = userData.id; // Pastikan backend kirim field 'id'
+
+        if (!guruId) throw new Error("ID Guru tidak ditemukan.");
+
+        // 2. FETCH API (Cookie HttpOnly otomatis ikut di background)
+        const [scheduleData, siswaData] = await Promise.all([
+            apiCall(`/guru/${guruId}/mapel-kelas`),
+            usersApi.getSiswa()
+        ])
+
+        setRawSchedule(Array.isArray(scheduleData) ? scheduleData : [])
+        setListSiswa(Array.isArray(siswaData) ? siswaData : [])
+        
+        // AUTO FILL DARI URL
+        const urlKelasId = searchParams.get("kelasId")
+        const urlMapelId = searchParams.get("mapelId")
+        
+        if (urlKelasId) setSelectedKelas(urlKelasId)
+        if (urlMapelId) setSelectedMapel(urlMapelId)
+
+      } catch (err) {
+        console.error("Fetch Error:", err)
+        setError(err instanceof Error ? err.message : "Gagal mengambil data master")
+      } finally {
+        setLoading(false)
+      }
     }
-  };
 
-  // LOGIC FILTERING
-  const filteredKelas = kelasList.filter(kelas => {
-    const term = searchTerm.toLowerCase();
-    return (
-      kelas.nama_kelas.toLowerCase().includes(term) ||
-      kelas.jurusan.toLowerCase().includes(term) ||
-      kelas.tingkat.toLowerCase().includes(term)
-    );
-  });
+    fetchData()
+  }, [searchParams]) 
 
-  // Helper untuk memunculkan Modal Sukses
+  // --- LOGIKA FILTERING ---
+  const listKelasUnik = useMemo(() => {
+    const uniqueKelas = new Map()
+    rawSchedule.forEach(item => {
+      if (!uniqueKelas.has(item.kelas_id)) {
+        uniqueKelas.set(item.kelas_id, {
+            id: item.kelas_id,
+            nama: item.nama_kelas
+        })
+      }
+    })
+    return Array.from(uniqueKelas.values())
+  }, [rawSchedule])
+
+  const listMapelFiltered = useMemo(() => {
+    if (!selectedKelas) return []
+    return rawSchedule
+      .filter(item => item.kelas_id === selectedKelas)
+      .map(item => ({
+        id: item.mapel_id,
+        nama: item.nama_mapel
+      }))
+  }, [rawSchedule, selectedKelas])
+
+  const filteredSiswa = listSiswa.filter(
+    (siswa) => !selectedKelas || String(siswa.kelas_id) === String(selectedKelas)
+  )
+
+  // --- HELPER & SUBMIT ---
   const showSuccessPopup = (msg: string) => {
-    setSuccessMessage(msg);
-    setShowSuccessModal(true);
+    setSuccessMessage(msg)
+    setShowSuccessModal(true)
     setTimeout(() => {
-      setShowSuccessModal(false);
-    }, 2000);
-  };
+      setShowSuccessModal(false)
+    }, 2000)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault()
+    setError("")
     
-    if (isSubmitting) return;
+    if (isSubmitting) return
 
-    setIsSubmitting(true);
-    setError(""); // Reset error jika ada
-
-    try {
-      if (editId) {
-        await kelasApi.update(editId, {
-          nama: formData.nama_kelas,
-          tingkat: formData.tingkat,
-          jurusan: formData.jurusan,
-        });
-        showSuccessPopup("Data kelas berhasil diperbarui!");
-        setEditId(null);
-      } else {
-        await kelasApi.create(formData);
-        showSuccessPopup("Kelas baru berhasil dibuat!");
-      }
-      setFormData({ id: "", nama_kelas: "", tingkat: "10", jurusan: "" });
-      setShowForm(false);
-      fetchKelas();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal menyimpan kelas");
-    } finally {
-      setIsSubmitting(false);
+    if (!selectedKelas || !selectedMapel || !selectedSiswa) {
+      setError("Mohon lengkapi semua pilihan (Kelas, Mapel, Siswa)")
+      return
     }
-  };
 
-  const triggerDelete = (id: string) => {
-    setDeleteId(id);
-    setShowDeleteModal(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteId) return;
-
-    setIsDeleting(true);
-    try {
-      await kelasApi.delete(deleteId);
-      showSuccessPopup("Kelas berhasil dihapus permanen.");
-      fetchKelas();
-      setShowDeleteModal(false); // Tutup modal jika sukses
-      setDeleteId(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal menghapus kelas");
-      setShowDeleteModal(false); // Tutup modal biar user liat alert error
-    } finally {
-      setIsDeleting(false);
+    if (nilai === "") {
+      setError("Nilai wajib diisi")
+      return
     }
-  };
 
-  const handleEdit = (kelas: any) => {
-    setFormData({
-      id: kelas.id,
-      nama_kelas: kelas.nama_kelas,
-      tingkat: kelas.tingkat,
-      jurusan: kelas.jurusan,
-    });
-    setEditId(kelas.id);
-    setShowForm(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+    setIsSubmitting(true)
+    try {
+      await nilaiApi.createNilai(
+        selectedSiswa, 
+        selectedMapel, 
+        semester, 
+        { nilai: Number(nilai) }
+      )
 
+      showSuccessPopup("Nilai berhasil disimpan!")
+      setNilai("") 
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyimpan nilai")
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // --- RENDER CONTENT ---
   return (
-    <ProtectedRoute requiredRoles={["admin"]}>
-      <div className="min-h-screen bg-slate-50/50">
+    <div className="flex-1 p-4 md:p-8">
+      {/* Header */}
+      <div className="flex justify-between items-end mb-8">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3 text-slate-900">
+             <FileText className="h-8 w-8 text-blue-600" /> Input Nilai
+          </h1>
+          <p className="text-slate-500 mt-2 text-sm">
+            Formulir penilaian hasil belajar siswa.
+          </p>
+        </div>
+      </div>
+
+      {error && <Alert message={error} type="error" onClose={() => setError("")} />}
+
+      {loading ? (
+        <div className="flex justify-center h-64 items-center flex-col gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+          <p className="text-slate-500 font-medium">Memuat data kelas...</p>
+        </div>
+      ) : (
+        <div className="max-w-3xl mx-auto mt-4">
+           <Card className="mb-8 border-none shadow-xl bg-white overflow-hidden animate-in slide-in-from-bottom-4 duration-500">
+             
+             {/* Card Header */}
+             <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4 flex items-center gap-2">
+                <div className="p-1.5 bg-blue-100 rounded text-blue-600">
+                   <FileText className="w-4 h-4" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-800">Form Penilaian</h2>
+             </div>
+             
+             <div className="p-6 md:p-8">
+                <form onSubmit={handleSubmit} className="space-y-8">
+                   
+                   {/* SECTION 1: DATA KELAS & MAPEL */}
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase text-slate-500 ml-1 flex items-center gap-1">
+                             <School className="w-3 h-3" /> Kelas
+                          </label>
+                          <select
+                            value={selectedKelas}
+                            onChange={(e) => {
+                              setSelectedKelas(e.target.value)
+                              setSelectedMapel("") 
+                              setSelectedSiswa("") 
+                            }}
+                            required
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm outline-none cursor-pointer"
+                          >
+                            <option value="">-- Pilih Kelas --</option>
+                            {listKelasUnik.map((k) => (
+                              <option key={k.id} value={k.id}>{k.nama}</option>
+                            ))}
+                          </select>
+                      </div>
+
+                      <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase text-slate-500 ml-1 flex items-center gap-1">
+                             <BookOpen className="w-3 h-3" /> Mata Pelajaran
+                          </label>
+                          <select
+                            value={selectedMapel}
+                            onChange={(e) => setSelectedMapel(e.target.value)}
+                            required
+                            disabled={!selectedKelas}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm outline-none cursor-pointer disabled:opacity-60"
+                          >
+                            <option value="">
+                              {selectedKelas ? "-- Pilih Mapel --" : "Pilih Kelas Dahulu"}
+                            </option>
+                            {listMapelFiltered.map((m) => (
+                              <option key={m.id} value={m.id}>{m.nama}</option>
+                            ))}
+                          </select>
+                      </div>
+                   </div>
+                   
+                   <div className="h-px bg-slate-100 w-full"></div>
+
+                   {/* SECTION 2: DATA SISWA & NILAI */}
+                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      
+                      <div className="md:col-span-3 space-y-2">
+                          <label className="text-xs font-bold uppercase text-slate-500 ml-1 flex items-center gap-1">
+                             <User className="w-3 h-3" /> Nama Siswa
+                          </label>
+                          <select
+                            value={selectedSiswa}
+                            onChange={(e) => setSelectedSiswa(e.target.value)}
+                            required
+                            disabled={!selectedKelas}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm outline-none cursor-pointer disabled:opacity-60"
+                          >
+                            <option value="">
+                              {selectedKelas ? "-- Pilih Siswa --" : "Pilih Kelas Dahulu"}
+                            </option>
+                            {filteredSiswa.length === 0 && selectedKelas ? (
+                              <option disabled>Tidak ada siswa di kelas ini</option>
+                            ) : (
+                              filteredSiswa.map((s) => (
+                                <option key={s.siswa_id} value={s.siswa_id}>{s.siswa_nama}</option>
+                              ))
+                            )}
+                          </select>
+                      </div>
+
+                      <div className="md:col-span-1 space-y-2">
+                          <label className="text-xs font-bold uppercase text-slate-500 ml-1 flex items-center gap-1">
+                             <Hash className="w-3 h-3" /> Nilai (0-100)
+                          </label>
+                          <input
+                            type="number"
+                            value={nilai}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              if (val === "" || (Number(val) >= 0 && Number(val) <= 100)) {
+                                  setNilai(val)
+                              }
+                            }}
+                            placeholder="0"
+                            required
+                            min="0"
+                            max="100"
+                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-lg font-bold text-center focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm placeholder:font-normal"
+                          />
+                      </div>
+
+                      <div className="md:col-span-2 space-y-2">
+                          <label className="text-xs font-bold uppercase text-slate-500 ml-1">Semester</label>
+                          <div className="grid grid-cols-2 gap-4">
+                             <div 
+                                onClick={() => setSemester("1")}
+                                className={`cursor-pointer px-4 py-3 rounded-xl border text-center text-sm font-medium transition-all ${semester === "1" ? "bg-blue-50 border-blue-500 text-blue-700 shadow-sm ring-1 ring-blue-500" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                             >
+                                Semester 1 (Ganjil)
+                             </div>
+                             <div 
+                                onClick={() => setSemester("2")}
+                                className={`cursor-pointer px-4 py-3 rounded-xl border text-center text-sm font-medium transition-all ${semester === "2" ? "bg-blue-50 border-blue-500 text-blue-700 shadow-sm ring-1 ring-blue-500" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                             >
+                                Semester 2 (Genap)
+                             </div>
+                          </div>
+                      </div>
+                   </div>
+
+                   {/* SUBMIT BUTTON */}
+                   <div className="pt-6">
+                      <Button 
+                          type="submit" 
+                          disabled={isSubmitting}
+                          className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-bold text-lg shadow-lg shadow-green-900/20 transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                          {isSubmitting ? (
+                             <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Menyimpan...</>
+                          ) : (
+                             <><Save className="mr-2 h-5 w-5" /> Simpan Nilai</>
+                          )}
+                      </Button>
+                   </div>
+
+                </form>
+             </div>
+           </Card>
+
+           {/* Tips Section */}
+           <div className="text-center text-xs text-slate-400">
+              <p>Pastikan data yang dipilih sudah benar sebelum menyimpan.</p>
+           </div>
+        </div>
+      )}
+
+      {/* === MODAL SUKSES === */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center transform scale-100 animate-in zoom-in-95">
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100 mb-6 animate-pulse">
+                <CheckCircle2 className="h-10 w-10 text-green-600" />
+            </div>
+            <h3 className="text-2xl font-bold text-slate-900 mb-3">Berhasil!</h3>
+            <p className="text-slate-600 leading-relaxed font-medium">
+              {successMessage}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- 2. PARENT COMPONENT DENGAN SUSPENSE (EXPORT DEFAULT) ---
+export default function InputNilai() {
+  return (
+    <ProtectedRoute requiredRoles={["guru"]}>
+      <div className="min-h-screen bg-slate-50/50 relative">
         <Navbar />
         <div className="flex">
           <Sidebar />
-          <main className="flex-1 p-4 md:p-8 relative">
-            
-            {/* Header Page */}
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                 <h1 className="text-3xl font-bold flex items-center gap-3 text-slate-900">
-                   <School className="h-8 w-8 text-blue-600" /> Manage Kelas
-                 </h1>
-                 <p className="text-slate-500 mt-1">Atur data kelas, tingkat, dan jurusan.</p>
-              </div>
-              
-              {!showForm && (
-                <Button
-                  onClick={() => {
-                    setShowForm(true);
-                    setEditId(null);
-                    setFormData({ id: "", nama_kelas: "", tingkat: "10", jurusan: "" });
-                  }}
-                  className="bg-green-600 hover:bg-green-700 shadow-lg shadow-green-900/20 text-white cursor-pointer"
-                >
-                  <Plus className="mr-2 h-4 w-4" /> Tambah Kelas
-                </Button>
-              )}
-            </div>
-
-            {/* --- SEARCH BAR (NEW) --- */}
-            <div className="mb-8 max-w-lg relative">
-                <Search className="absolute left-4 top-3.5 h-4 w-4 text-slate-400" />
-                <input
-                    type="text"
-                    placeholder={`Cari kelas dari total ${kelasList.length} kelas berdasarkan nama, tingkat, atau jurusan...`}
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all shadow-md"
-                />
-            </div>
-            {/* --- END SEARCH BAR --- */}
-
-            {/* Error Alert */}
-            {error && <Alert message={error} type="error" onClose={() => setError("")} />}
-
-            {/* --- FORM AREA --- */}
-            {showForm && (
-              <Card className="mb-8 border-none shadow-xl bg-white overflow-hidden animate-in slide-in-from-top-4 duration-300">
-                <div className="border-b border-slate-100 bg-slate-50/50 px-6 py-4 flex justify-between items-center">
-                   <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                      {editId ? <Pencil className="h-4 w-4 text-blue-500"/> : <Plus className="h-4 w-4 text-green-500"/>}
-                      {editId ? "Edit Informasi Kelas" : "Buat Kelas Baru"}
-                   </h2>
-                   <Button variant="ghost" size="sm" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-red-500 rounded-full h-8 w-8 p-0 cursor-pointer">
-                      <X className="h-5 w-5" />
-                   </Button>
+          
+          <Suspense fallback={
+            <div className="flex-1 flex items-center justify-center min-h-screen">
+                <div className="flex flex-col items-center gap-3">
+                   <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                   <p className="text-sm text-slate-500">Memuat formulir...</p>
                 </div>
-                
-                <div className="p-6">
-                  <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                      
-                      {/* ID Kelas */}
-                      <div className="md:col-span-3">
-                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 ml-1">
-                          ID Kelas
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.id}
-                          onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-                          placeholder="Ex: 10IPA1"
-                          required
-                          disabled={!!editId}
-                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                        />
-                      </div>
+            </div>
+          }>
+              <InputNilaiContent />
+          </Suspense>
 
-                      {/* Nama Kelas */}
-                      <div className="md:col-span-4">
-                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 ml-1">
-                          Nama Kelas
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.nama_kelas}
-                          onChange={(e) => setFormData({ ...formData, nama_kelas: e.target.value })}
-                          placeholder="Ex: X IPA 1"
-                          required
-                          className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                        />
-                      </div>
-
-                      {/* Tingkat */}
-                      <div className="md:col-span-2">
-                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 ml-1">
-                          Tingkat
-                        </label>
-                        <div className="relative">
-                          <select
-                            value={formData.tingkat}
-                            onChange={(e) => setFormData({ ...formData, tingkat: e.target.value })}
-                            className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none cursor-pointer appearance-none"
-                          >
-                            <option value="10">10</option>
-                            <option value="11">11</option>
-                            <option value="12">12</option>
-                          </select>
-                          <div className="absolute right-3 top-3 pointer-events-none">
-                             <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Jurusan */}
-                      <div className="md:col-span-3">
-                        <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 ml-1">
-                          Jurusan
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.jurusan}
-                          onChange={(e) => setFormData({ ...formData, jurusan: e.target.value })}
-                          placeholder="Ex: IPA / MIPA"
-                          className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-3 pt-2 border-t border-slate-50">
-                       <Button 
-                          type="button" 
-                          variant="ghost" 
-                          onClick={() => setShowForm(false)}
-                          disabled={isSubmitting}
-                          className="text-slate-500 hover:bg-slate-100 cursor-pointer"
-                        >
-                          Batal
-                       </Button>
-                       
-                       {/* BUTTON SIMPAN */}
-                       <Button 
-                        type="submit" 
-                        disabled={isSubmitting}
-                        className="bg-green-600 hover:bg-green-700 shadow-lg shadow-green-900/20 px-6 min-w-[140px] cursor-pointer disabled:cursor-not-allowed"
-                       >
-                          {isSubmitting ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Menyimpan...
-                            </>
-                          ) : (
-                            <>
-                              <Save className="w-4 h-4 mr-2" />
-                              {editId ? "Simpan Perubahan" : "Simpan Kelas Baru"}
-                            </>
-                          )}
-                       </Button>
-                    </div>
-                  </form>
-                </div>
-              </Card>
-            )}
-
-            {/* --- LIST KELAS (GRID CARD) --- */}
-            {loading ? (
-              <div className="flex justify-center h-40 items-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredKelas.map((kelas) => (
-                  <Card
-                    key={kelas.id}
-                    className="group relative overflow-hidden border border-slate-200 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 bg-white"
-                  >
-                    <div className="h-2 w-full bg-gradient-to-r from-blue-500 to-indigo-500"></div>
-                    
-                    <div className="p-5">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Kelas</p>
-                           <h3 className="text-2xl font-black text-slate-800 tracking-tight">
-                             {kelas.nama_kelas}
-                           </h3>
-                        </div>
-                        <div className="px-2.5 py-1 rounded-md bg-slate-100 text-xs font-bold text-slate-600 border border-slate-200">
-                           {kelas.tingkat}
-                        </div>
-                      </div>
-                      
-                      <div className="mb-6 pb-6 border-b border-dashed border-slate-200">
-                        <p className="text-sm text-slate-500 flex items-center gap-2">
-                           <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                           Jurusan: <span className="font-semibold text-slate-700">{kelas.jurusan || "-"}</span>
-                        </p>
-                      </div>
-
-                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 translate-y-2 group-hover:translate-y-0">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleEdit(kelas)}
-                          className="flex-1 hover:bg-blue-50 hover:text-blue-600 border-slate-200 cursor-pointer"
-                        >
-                          <Pencil className="w-3 h-3 mr-1.5" /> Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => triggerDelete(kelas.id)}
-                          className="flex-1 hover:bg-red-50 text-red-600 hover:text-red-700 cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3 mr-1.5" /> Hapus
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </main>
         </div>
-
-        {/* --- 1. MODAL SUKSES (HIJAU) --- */}
-        {showSuccessModal && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
-            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center transform scale-100 animate-in zoom-in-95">
-               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mb-6 animate-pulse">
-                  <CheckCircle2 className="h-8 w-8 text-green-600" />
-               </div>
-               <h3 className="text-2xl font-bold text-slate-900 mb-2">Berhasil!</h3>
-               <p className="text-slate-500">{successMessage}</p>
-            </div>
-          </div>
-        )}
-
-        {/* --- 2. MODAL DELETE (MERAH + LOADING) --- */}
-        {showDeleteModal && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div 
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-              onClick={() => !isDeleting && setShowDeleteModal(false)}
-            ></div>
-
-            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform scale-100 animate-in zoom-in-95 border border-slate-100">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50 mb-4 animate-pulse">
-                <AlertTriangle className="h-8 w-8 text-red-600" />
-              </div>
-
-              <div className="text-center">
-                <h3 className="text-xl font-bold text-slate-900 mb-2">Hapus Kelas Ini?</h3>
-                <p className="text-sm text-slate-500 leading-relaxed mb-6">
-                  Data kelas yang dihapus tidak dapat dikembalikan. Siswa dalam kelas ini mungkin akan kehilangan referensi kelas.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  disabled={isDeleting}
-                  className="inline-flex w-full justify-center rounded-xl bg-white px-3 py-3 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:opacity-50 cursor-pointer transition-colors"
-                  onClick={() => setShowDeleteModal(false)}
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeleting}
-                  className="inline-flex w-full justify-center items-center rounded-xl bg-red-600 px-3 py-3 text-sm font-semibold text-white shadow-sm hover:bg-red-500 disabled:opacity-70 disabled:cursor-not-allowed transition-all cursor-pointer"
-                  onClick={confirmDelete}
-                >
-                  {isDeleting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Menghapus...
-                    </>
-                  ) : (
-                    "Ya, Hapus"
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
       </div>
     </ProtectedRoute>
-  );
+  )
 }
