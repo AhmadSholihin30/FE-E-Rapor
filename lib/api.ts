@@ -1,6 +1,4 @@
-// API base configuration
-// const API_BASE_URL = "https://restful-api-e-rapor-production.up.railway.app/api" // Gunakan proxy API untuk development
-const API_BASE_URL = "http://localhost:4000/api"; // Ganti dengan URL lokal saat development
+const API_BASE_URL = "https://restful-api-e-rapor-production.up.railway.app/api" 
 
 const PUBLIC_PATHS = ['/login', '/register', '/unauthorized'];
 interface ApiOptions {
