@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { GraduationCap, UserCircle, LogOut, User } from "lucide-react"
+import { GraduationCap, UserCircle, LogOut, User, Lock } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,12 +53,10 @@ export function Navbar() {
   const profileLink = `/${user.role}/profile`
 
   return (
-    // UBAH DISINI: Hapus gradient, pakai solid slate-900 biar match sama sidebar
     <nav className="bg-slate-900 border-b border-slate-800 text-white shadow-sm sticky top-0 z-50">
       
       <div className="w-full px-4 sm:px-8 py-3 flex items-center justify-between">
         
-        {/* BAGIAN KIRI: Logo & Menu */}
         <div className="flex items-center gap-8">
           <Link href="/" className="font-bold text-lg hover:opacity-90 flex items-center gap-2">
             <GraduationCap className="h-7 w-7 text-blue-500" />
@@ -78,7 +76,6 @@ export function Navbar() {
           </div>
         </div>
 
-        {/* BAGIAN KANAN: PROFILE */}
         <div className="flex items-center gap-4">
           
           <div className="hidden md:flex flex-col items-end">
@@ -100,6 +97,7 @@ export function Navbar() {
                   <p className="text-xs leading-none text-slate-500">{user.email}</p>
                 </div>
               </DropdownMenuLabel>
+
               <DropdownMenuSeparator className="bg-slate-800" />
               
               <DropdownMenuItem asChild className="cursor-pointer focus:bg-slate-800 focus:text-white">
@@ -108,6 +106,18 @@ export function Navbar() {
                   <span>Profile Saya</span>
                 </Link>
               </DropdownMenuItem>
+
+              {/* ==================================================== */}
+              {/* 🔐 MENU BARU → LOCK SYSTEM                         */}
+              {/* ==================================================== */}
+              <DropdownMenuItem
+                onClick={() => router.push("/locked")}
+                className="cursor-pointer focus:bg-slate-800 focus:text-white text-yellow-400"
+              >
+                <Lock className="mr-2 h-4 w-4" />
+                <span>Kunci Sistem</span>
+              </DropdownMenuItem>
+              {/* ==================================================== */}
 
               <DropdownMenuSeparator className="bg-slate-800" />
               

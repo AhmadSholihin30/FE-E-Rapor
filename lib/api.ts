@@ -69,6 +69,11 @@ export const authApi = {
       body: data,
     }),
   authMe: () => apiCall("/auth/me"),
+  unlock: (id: string | number, password: string) =>
+    apiCall<{ success: boolean; message: string }>(`/auth/unlock/${id}`, {
+      method: "POST",
+      body: { password },
+    }),
 };
 
 // Kelas endpoints

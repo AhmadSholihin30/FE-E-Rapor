@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next"
 import { AuthProvider } from "@/lib/auth-context"
 import "./globals.css"
 import { Toaster } from 'react-hot-toast';
+import { AutoLockTimer } from "@/components/AutoLockTimer"
 
 const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -24,7 +25,10 @@ export default function RootLayout({
     <html lang="en">
       <body className={`font-sans antialiased`}>
         <Toaster position="top-center" />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          {children}
+          <AutoLockTimer />
+        </AuthProvider>
         <Analytics />
       </body>
     </html>

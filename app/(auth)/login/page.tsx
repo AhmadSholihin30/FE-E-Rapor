@@ -25,7 +25,7 @@ export default function LoginPage() {
   const [failedAttempts, setFailedAttempts] = useState<number>(0)
   const [isLocked, setIsLocked] = useState<boolean>(false)
   const [lockoutTimer, setLockoutTimer] = useState<number>(0)
-  const [lockoutLevel, setLockoutLevel] = useState<number>(1) // Level hukuman (1x, 2x, 3x)
+  const [lockoutLevel, setLockoutLevel] = useState<number>(1) 
 
   const { login } = useAuth()
   const router = useRouter()
