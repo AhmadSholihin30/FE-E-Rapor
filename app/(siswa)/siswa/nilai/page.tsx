@@ -7,84 +7,130 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Card } from "@/components/ui/card"
 import { Alert } from "@/components/alert"
 import { useAuth } from "@/lib/auth-context"
-import { nilaiApi } from "@/lib/api"
-// Import Icon
+// Pastikan authApi sudah ada di export lib/api
+import { nilaiApi, authApi } from "@/lib/api"
 import { 
   BookOpen, GraduationCap, Calendar, FileDown, 
   CheckCircle2, XCircle, Loader2, BarChart3 
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-
-// Import untuk Export PDF
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 
+// --- 1. DEFINISI TIPE DATA (INTERFACE) ---
+// Biar TypeScript gak error dan coding lebih enak
+interface UserData {
+  id: number
+  nama: string
+  email: string
+  role: string
+  nisn?: string | null // Bisa null atau string
+  nip?: string | null  // Antisipasi kalau ada field nip
+}
+
+interface AuthResponse {
+  user: UserData
+}
+
+interface NilaiData {
+  id: number
+  nama_mapel: string
+  kkm: number
+  nilai_angka: string // Biasanya API balikin string angka
+}
+
 export default function NilaiPage() {
   const { user } = useAuth()
-  const [nilai, setNilai] = useState<any[]>([])
+  
+  // State dengan Tipe Data yang jelas
+  const [nilai, setNilai] = useState<NilaiData[]>([])
+  const [siswaData, setSiswaData] = useState<UserData | null>(null)
+  
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [selectedSemester, setSelectedSemester] = useState(1)
 
   useEffect(() => {
-    const fetchNilai = async () => {
+    const fetchData = async () => {
       try {
         if (!user?.id) return
         setLoading(true)
-        const response = await nilaiApi.getNilaiBySiswa(user.id, selectedSemester.toString())
-        const data = Array.isArray(response) ? response : (response as any).data || []
-        setNilai(data)
+
+        // Hit 2 Endpoint sekaligus
+        const [nilaiRes, authRes] = await Promise.all([
+          nilaiApi.getNilaiBySiswa(user.id, selectedSemester.toString()),
+          authApi.authMe()
+        ])
+
+        // 1. Handle Data Nilai
+        // Cek apakah response array langsung atau terbungkus data
+        const dataNilai = Array.isArray(nilaiRes) ? nilaiRes : (nilaiRes as any).data || []
+        setNilai(dataNilai)
+
+        // 2. Handle Data Siswa (FIX DISINI)
+        // Kita paksa casting authRes ke 'any' dulu biar aman, lalu ambil .user
+        const responseData = authRes as any
+        
+        // Logika: Ambil properti 'user' dari response JSON
+        if (responseData.user) {
+          setSiswaData(responseData.user)
+        } else if (responseData.data?.user) {
+          // Jaga-jaga kalau axios ngebungkus di .data lagi
+          setSiswaData(responseData.data.user)
+        } else {
+          // Fallback
+          setSiswaData(responseData)
+        }
+
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Gagal mengambil data nilai")
+        console.error("Error fetching data:", err)
+        setError(err instanceof Error ? err.message : "Gagal mengambil data")
       } finally {
         setLoading(false)
       }
     }
 
-    fetchNilai()
+    fetchData()
   }, [user?.id, selectedSemester])
 
   const hitungRataRata = () => {
-    if (nilai.length === 0) return 0
+    if (nilai.length === 0) return "0"
     const total = nilai.reduce((sum, n) => sum + parseFloat(n.nilai_angka), 0)
     return (total / nilai.length).toFixed(2)
   }
 
-  // --- FUNGSI EXPORT PDF (UPDATE) ---
+  // --- FUNGSI EXPORT PDF ---
   const handleExportPDF = () => {
     const doc = new jsPDF()
     
-    // Casting user ke 'any' agar bisa akses properti 'nisn' dari JSON API
-    // Pastikan user object dari context memang membawa field 'nisn'
-    const userData = user as any; 
+    // Ambil data dari state, kasih default object kosong biar gak error
+    const currentSiswa = siswaData || {} as UserData
 
-    // 1. Judul Besar
+    // 1. Judul
     doc.setFontSize(18)
     doc.setFont("helvetica", "bold")
     doc.text("LAPORAN HASIL BELAJAR SISWA", 105, 20, { align: "center" })
     
-    // Garis Pembatas Header
     doc.setLineWidth(0.5)
     doc.line(14, 25, 196, 25)
 
-    // 2. Info Siswa (Nama & NISN)
+    // 2. Info Siswa
     doc.setFontSize(11)
     doc.setFont("helvetica", "normal")
     
     const startY = 35
     const lineHeight = 7
 
-    // Ambil Nama & NISN
-    doc.text(`Nama Siswa  : ${userData?.nama || userData?.name || "-"}`, 14, startY)
+    // Ambil Nama
+    doc.text(`Nama Siswa  : ${currentSiswa.nama || user?.name || "-"}`, 14, startY)
     
-    // FIX: Ambil NISN dengan pengecekan nullish coalescing
-    const nisnValue = userData?.nisn || "-"; 
-    doc.text(`NISN        : ${nisnValue}`, 14, startY + lineHeight)
+    // Ambil NISN (Pastikan fieldnya 'nisn', kalau API balikin 'nip' buat siswa, sesuaikan disini)
+    const displayNisn = currentSiswa.nisn || currentSiswa.nip || "-"
+    doc.text(`NISN        : ${displayNisn}`, 14, startY + lineHeight)
     
     doc.text(`Semester    : ${selectedSemester === 1 ? "1 (Ganjil)" : "2 (Genap)"}`, 14, startY + lineHeight * 2)
-    // Tahun Ajar dihapus
 
-    // 3. Tabel Data
+    // 3. Tabel
     const tableColumn = ["No", "Mata Pelajaran", "KKM", "Nilai Akhir", "Keterangan"]
     const tableRows: any[] = []
 
@@ -111,14 +157,14 @@ export default function NilaiPage() {
       styles: { fontSize: 10, cellPadding: 3, valign: 'middle' },
       headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold', halign: 'center' },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 15 }, // No
-        2: { halign: 'center', cellWidth: 20 }, // KKM
-        3: { halign: 'center', cellWidth: 30, fontStyle: 'bold' }, // Nilai
-        4: { halign: 'center', cellWidth: 35 }, // Status
+        0: { halign: 'center', cellWidth: 15 }, 
+        2: { halign: 'center', cellWidth: 20 }, 
+        3: { halign: 'center', cellWidth: 30, fontStyle: 'bold' },
+        4: { halign: 'center', cellWidth: 35 }, 
       }
     })
 
-    // 4. Footer Rata-rata
+    // 4. Footer
     const finalY = (doc as any).lastAutoTable.finalY + 10
     
     doc.setFillColor(240, 253, 244) 
@@ -134,7 +180,7 @@ export default function NilaiPage() {
     doc.setFontSize(9)
     doc.text(`Dicetak otomatis pada: ${new Date().toLocaleDateString("id-ID", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, 14, finalY + 25)
 
-    const fileName = `Rapor_${userData?.nama || "Siswa"}_${nisnValue}.pdf`.replace(/\s+/g, "_");
+    const fileName = `Rapor_${currentSiswa.nama || "Siswa"}.pdf`.replace(/\s+/g, "_");
     doc.save(fileName)
   }
 
@@ -146,7 +192,7 @@ export default function NilaiPage() {
           <Sidebar />
           <main className="flex-1 p-4 md:p-8">
             
-            {/* Header Page */}
+            {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
               <div>
                 <h1 className="text-3xl font-bold flex items-center gap-3 text-slate-900">
@@ -157,7 +203,6 @@ export default function NilaiPage() {
                 </p>
               </div>
               
-              {/* Filter & Export */}
               <div className="flex items-center gap-3 w-full md:w-auto">
                  <div className="relative w-full md:w-48">
                     <div className="absolute left-3 top-2.5 text-slate-400 pointer-events-none">
@@ -185,95 +230,79 @@ export default function NilaiPage() {
 
             {error && <Alert message={error} type="error" onClose={() => setError("")} />}
 
-            {/* Content */}
             {loading ? (
                <div className="flex justify-center h-64 items-center flex-col gap-3">
                   <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
                   <p className="text-slate-500 font-medium">Memuat data nilai...</p>
                </div>
             ) : (
-              <>
-                {/* 1. TABEL NILAI */}
-                <Card className="overflow-hidden border border-slate-200 shadow-sm bg-white mb-6">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-900 text-white">
-                        <tr>
-                          <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">Mata Pelajaran</th>
-                          <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">KKM</th>
-                          <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">Nilai Akhir</th>
-                          <th className="px-6 py-4 text-center font-bold text-xs uppercase tracking-wider">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {nilai.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} className="px-6 py-16 text-center text-slate-400 flex flex-col items-center justify-center">
+               <>
+                 {/* TABEL NILAI */}
+                 <Card className="overflow-hidden border border-slate-200 shadow-sm bg-white mb-6">
+                   <div className="overflow-x-auto">
+                     <table className="w-full text-sm">
+                       <thead className="bg-slate-900 text-white">
+                         <tr>
+                           <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">Mata Pelajaran</th>
+                           <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">KKM</th>
+                           <th className="px-6 py-4 text-left font-bold text-xs uppercase tracking-wider">Nilai Akhir</th>
+                           <th className="px-6 py-4 text-center font-bold text-xs uppercase tracking-wider">Status</th>
+                         </tr>
+                       </thead>
+                       <tbody className="divide-y divide-slate-100">
+                         {nilai.length === 0 ? (
+                           <tr>
+                             <td colSpan={4} className="px-6 py-16 text-center text-slate-400 flex flex-col items-center justify-center">
                                <BookOpen className="h-12 w-12 mb-3 opacity-20" />
                                Tidak ada data nilai untuk semester ini.
-                            </td>
-                          </tr>
-                        ) : (
-                          nilai.map((n) => {
-                            const nilaiAngka = parseFloat(n.nilai_angka)
-                            const kkm = n.kkm
-                            const isTuntas = nilaiAngka >= kkm
-
-                            return (
-                              <tr key={n.id} className="hover:bg-slate-50/80 transition-colors">
-                                <td className="px-6 py-4 font-medium text-slate-700">
-                                   {n.nama_mapel}
-                                </td>
-                                <td className="px-6 py-4 text-slate-500 font-mono">
-                                   {n.kkm}
-                                </td>
-                                <td className="px-6 py-4">
+                             </td>
+                           </tr>
+                         ) : (
+                           nilai.map((n) => {
+                             const nilaiAngka = parseFloat(n.nilai_angka)
+                             const isTuntas = nilaiAngka >= n.kkm
+                             return (
+                               <tr key={n.id} className="hover:bg-slate-50/80 transition-colors">
+                                 <td className="px-6 py-4 font-medium text-slate-700">{n.nama_mapel}</td>
+                                 <td className="px-6 py-4 text-slate-500 font-mono">{n.kkm}</td>
+                                 <td className="px-6 py-4">
                                    <span className="font-bold text-lg text-slate-800">{n.nilai_angka}</span>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                   <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
-                                      isTuntas 
-                                        ? "bg-green-50 text-green-700 border-green-200" 
-                                        : "bg-red-50 text-red-700 border-red-200"
-                                   }`}>
-                                      {isTuntas ? (
-                                         <><CheckCircle2 className="w-3 h-3" /> Tuntas</>
-                                      ) : (
-                                         <><XCircle className="w-3 h-3" /> Remedial</>
-                                      )}
+                                 </td>
+                                 <td className="px-6 py-4 text-center">
+                                   <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${isTuntas ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"}`}>
+                                     {isTuntas ? <><CheckCircle2 className="w-3 h-3" /> Tuntas</> : <><XCircle className="w-3 h-3" /> Remedial</>}
                                    </span>
-                                </td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </Card>
-
-                {/* 2. SUMMARY CARD (RATA-RATA) */}
-                {nilai.length > 0 && (
-                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <Card className="p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-lg col-span-1 md:col-start-3">
-                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-medium text-slate-300 uppercase tracking-wider">Rata-Rata Semester {selectedSemester}</span>
-                            <div className="p-2 bg-white/10 rounded-lg">
-                               <BarChart3 className="w-5 h-5 text-white" />
-                            </div>
-                         </div>
-                         <div className="text-4xl font-extrabold tracking-tight text-white mt-2">
-                            {hitungRataRata()}
-                         </div>
-                         <div className="mt-4 text-xs text-slate-400 border-t border-white/10 pt-3">
-                            *Dihitung dari total {nilai.length} mata pelajaran.
-                         </div>
-                      </Card>
+                                 </td>
+                               </tr>
+                             )
+                           })
+                         )}
+                       </tbody>
+                     </table>
                    </div>
-                )}
-              </>
-            )}
+                 </Card>
 
+                 {/* SUMMARY CARD */}
+                 {nilai.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                       <Card className="p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-lg col-span-1 md:col-start-3">
+                          <div className="flex items-center justify-between mb-2">
+                             <span className="text-sm font-medium text-slate-300 uppercase tracking-wider">Rata-Rata Semester {selectedSemester}</span>
+                             <div className="p-2 bg-white/10 rounded-lg">
+                                <BarChart3 className="w-5 h-5 text-white" />
+                             </div>
+                          </div>
+                          <div className="text-4xl font-extrabold tracking-tight text-white mt-2">
+                             {hitungRataRata()}
+                          </div>
+                          <div className="mt-4 text-xs text-slate-400 border-t border-white/10 pt-3">
+                             *Dihitung dari total {nilai.length} mata pelajaran.
+                          </div>
+                       </Card>
+                    </div>
+                 )}
+               </>
+            )}
           </main>
         </div>
       </div>
